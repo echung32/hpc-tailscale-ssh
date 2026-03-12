@@ -1,0 +1,18 @@
+# Local config with real credentials — copy from .env.example
+.env
+
+# Tailscale auth key - obtain from https://login.tailscale.com/admin/settings/keys
+# Use a reusable, ephemeral key tagged with tag:container
+*.key
+
+# Tailscale runtime state (per-instance socket and state files)
+.tailscale/
+
+# Dropbear runtime state (host key, pid file)
+.sshd/
+
+# SLURM job output logs
+logs/
+
+# Apptainer container images (pulled separately, not versioned)
+images/
