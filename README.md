@@ -93,7 +93,7 @@ chmod 600 ~/.ssh/authorized_keys
 ```
 
 The job will:
-- Auto-pull `images/tailscale.sif` if not present
+- Auto-pull `images/tailscale.sif` if not present, or re-pull it if it is older than `TS_IMAGE_MAX_AGE_DAYS` (default 7)
 - Start `sshd` on `localhost:2222` as your HPC user (no PAM, no Duo)
 - Start `tailscaled` and forward Tailscale port 22 → `localhost:2222`
 
@@ -153,7 +153,7 @@ Or with VS Code:
 1. `./start_job.sh` reads `.env` and calls `sbatch` with `--account`, `--mail-user`, and `--chdir` set directly — no placeholder substitution needed
 2. SLURM starts the job on a CPU node
 3. `scripts/start-proxy.sh`:
-   - Auto-pulls `tailscale.sif` if missing
+   - Auto-pulls `tailscale.sif` if missing, and refreshes it when older than `TS_IMAGE_MAX_AGE_DAYS` (default 7 days). A refresh failure is non-fatal — the job warns and keeps using the image already on disk
    - Calls `scripts/start-sshd.sh` to start system `sshd` on `localhost:2222`
    - Calls `scripts/start-tailscale-ssh.sh` to start Tailscale with TCP forwarding
 4. `sshd` reads `~/.ssh/authorized_keys` from your HPC home directory
@@ -203,6 +203,7 @@ All options are in `.env`:
 | `WORKING_DIR` | (required) | Absolute path to `proxy/` directory |
 | `TS_HOSTNAME` | `hpc-ts-proxy` | Tailscale hostname (advertised on Tailnet, must be unique) |
 | `TS_INSTANCE` | `tailscale-proxy` | Tailscale state directory name (must be unique per concurrent job) |
+| `TS_IMAGE_MAX_AGE_DAYS` | `7` | Days before `images/tailscale.sif` is re-pulled at job start (`0` = every submission) |
 
 ## Troubleshooting
 
