@@ -25,14 +25,57 @@ if [ -f "$PROXY_DIR/.env" ]; then
   source "$PROXY_DIR/.env"
 fi
 
-# Auto-pull Tailscale image if not already present
+# Tailscale image: pull if missing, refresh if older than TS_IMAGE_MAX_AGE_DAYS.
+# The pull goes to a temp file and is swapped in with an atomic mv, so a job that
+# is already running keeps its old inode and an interrupted pull never leaves a
+# truncated SIF behind.
 TAILSCALE_SIF=$IMAGE_DIR/tailscale.sif
-if [ ! -f "$TAILSCALE_SIF" ]; then
-  echo "tailscale.sif not found — pulling from ghcr.io/tailscale/tailscale:latest ..."
+TAILSCALE_IMAGE=docker://ghcr.io/tailscale/tailscale:latest
+TS_IMAGE_MAX_AGE_DAYS=${TS_IMAGE_MAX_AGE_DAYS:-7}
+
+# Stale if TS_IMAGE_MAX_AGE_DAYS is 0 (always refresh) or the mtime is older
+# than that many days. -mmin is used rather than -mtime so "7 days" means 7x24h,
+# not -mtime's "more than 8 whole days".
+sif_is_stale() {
+  [ "$TS_IMAGE_MAX_AGE_DAYS" -le 0 ] && return 0
+  [ -n "$(find "$TAILSCALE_SIF" -maxdepth 0 -mmin +$((TS_IMAGE_MAX_AGE_DAYS * 1440)) 2>/dev/null)" ]
+}
+
+pull_tailscale_sif() {
+  local tmp=$IMAGE_DIR/.tailscale.sif.new
   mkdir -p "$IMAGE_DIR"
-  APPTAINER_CACHEDIR=/tmp apptainer pull "$TAILSCALE_SIF" docker://ghcr.io/tailscale/tailscale:latest
+  rm -f "$tmp"
+  if APPTAINER_CACHEDIR=/tmp apptainer pull "$tmp" "$TAILSCALE_IMAGE"; then
+    mv -f "$tmp" "$TAILSCALE_SIF"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
+if [ ! -f "$TAILSCALE_SIF" ]; then
+  # No image at all — the job cannot run without it, so a failure here is fatal.
+  echo "tailscale.sif not found — pulling from $TAILSCALE_IMAGE ..."
+  if ! pull_tailscale_sif; then
+    echo "ERROR: failed to pull $TAILSCALE_IMAGE" >&2
+    exit 1
+  fi
   echo "Pull complete: $TAILSCALE_SIF"
+elif sif_is_stale; then
+  # Image is stale. A refresh failure is non-fatal: a transient registry outage
+  # should not kill the job when a working image is already on disk.
+  if [ "$TS_IMAGE_MAX_AGE_DAYS" -le 0 ]; then
+    echo "TS_IMAGE_MAX_AGE_DAYS=0 — refreshing tailscale.sif from $TAILSCALE_IMAGE ..."
+  else
+    echo "tailscale.sif is older than $TS_IMAGE_MAX_AGE_DAYS day(s) — refreshing from $TAILSCALE_IMAGE ..."
+  fi
+  if pull_tailscale_sif; then
+    echo "Refresh complete: $TAILSCALE_SIF"
+  else
+    echo "WARNING: refresh failed — continuing with the existing image." >&2
+  fi
 fi
+echo "Tailscale image: $(apptainer exec "$TAILSCALE_SIF" tailscale --version 2>/dev/null | head -1) ($(date -r "$TAILSCALE_SIF" '+%Y-%m-%d'))"
 
 # Allow TS_INSTANCE and TS_HOSTNAME to be overridden at runtime; fall back to .env or default
 export TS_INSTANCE=${TS_INSTANCE:-tailscale-proxy}
