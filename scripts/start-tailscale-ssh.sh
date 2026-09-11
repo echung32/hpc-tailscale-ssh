@@ -3,12 +3,6 @@
 # Source this script from start-proxy.sh after setting:
 #   TS_INSTANCE  - unique name for this Apptainer instance (default: tailscale-proxy)
 #   TS_HOSTNAME  - tailscale hostname to advertise (default: hpc-ts-proxy)
-#
-# Differs from infra/scripts/start-tailscale.sh:
-#   - No TS_APP_PORT needed
-#   - No --ssh flag: Tailscale is used for TCP forwarding only
-#   - tailscale serve tcp:22 forwards Tailscale port 22 → localhost:2222 (sshd)
-#   - sshd is started separately by start-sshd.sh
 
 TS_DIR=$PROXY_DIR/.tailscale/$TS_INSTANCE
 TS_AUTH_KEY="$(cat $PROXY_DIR/.tailscale.key)"
@@ -43,17 +37,28 @@ if [ ! -S "$TS_DIR/run/tailscaled.sock" ]; then
   exit 1
 fi
 
+# Authenticate with extra stability flags
+# --accept-dns=false: Prevents Tailscale from fighting with HPC DNS
+# --reset: Clears any stale state from previous crashed runs
 apptainer exec instance://tailscale-$TS_INSTANCE \
   tailscale up \
   --hostname=$TS_HOSTNAME \
   --advertise-tags=tag:container \
-  --auth-key="$TS_AUTH_KEY"
+  --auth-key="$TS_AUTH_KEY" \
+  --accept-dns=false \
+  --reset
 
-# Forward Tailscale port 22 → localhost:2222 where sshd is listening.
+# Forward Tailscale port 22 → 127.0.0.1:2222 where sshd is listening.
+# The address is given as an IP literal, not "localhost": inside the Alpine
+# image "localhost" resolves to ::1 first, and sshd binds IPv4 loopback.
 # TCP connections arriving from the Tailnet on port 22 are proxied directly;
 # no Tailscale SSH server is involved, so the HPC PAM stack is never triggered.
 apptainer exec instance://tailscale-$TS_INSTANCE \
   tailscale serve \
   --bg \
   --tcp 22 \
-  tcp://localhost:2222
+  tcp://127.0.0.1:2222
+
+# Verify the serve status
+echo "Current Tailscale Serve Status:"
+apptainer exec instance://tailscale-$TS_INSTANCE tailscale serve status

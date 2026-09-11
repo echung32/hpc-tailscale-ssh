@@ -35,22 +35,30 @@ fi
 # Absolute paths are used throughout so this works regardless of $HOME or CWD.
 cat > "$SSHD_DIR/sshd_config" << EOF
 Port 2222
+# Loopback only. The Apptainer instance shares the host network namespace
+# (no --net), so tailscaled reaches this from inside the container without
+# exposing sshd to the rest of the cluster network.
 ListenAddress 127.0.0.1
 HostKey $SSHD_DIR/host_ed25519
 AuthorizedKeysFile $HOME/.ssh/authorized_keys
 PidFile $SSHD_DIR/sshd.pid
 
-# Skip Duo/PAM 2FA entirely
+# Reliability: Kill "ghost" connections faster
+ClientAliveInterval 15
+ClientAliveCountMax 3
+TCPKeepAlive yes
+
+# Performance: Allow VS Code's many simultaneous connections
+MaxStartups 100:30:200
+MaxSessions 100
+
+# HPC/Apptainer specific: Skip things that require root/system access
 UsePAM no
-
-# Bypass group-writable home directory check (common on HPC NFS mounts)
 StrictModes no
-
 PubkeyAuthentication yes
 PasswordAuthentication no
 ChallengeResponseAuthentication no
 KbdInteractiveAuthentication no
-
 UseDNS no
 X11Forwarding no
 Subsystem sftp internal-sftp
